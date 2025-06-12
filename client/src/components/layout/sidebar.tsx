@@ -5,6 +5,10 @@ import logoCollapsedPath from "@assets/Logo.png";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: "iconoir-view-grid", current: true, badge: null },
+  { name: "V1: Overview", href: "/v1-overview", icon: "iconoir-home", current: false, badge: null },
+  { name: "V2: Workstation", href: "/v2-workstation", icon: "iconoir-desktop", current: false, badge: null },
+  { name: "V3: Filter Heavy", href: "/v3-filter-heavy", icon: "iconoir-filter", current: false, badge: null },
+  { name: "V4: Statistics", href: "/v4-statistics", icon: "iconoir-bar-chart", current: false, badge: null },
   { name: "Active Cases", href: "/cases", icon: "iconoir-group", current: false, badge: "24" },
   { name: "Tasks", href: "/tasks", icon: "iconoir-list", current: false, badge: "8" },
   { name: "Dossiers", href: "/dossiers", icon: "iconoir-folder", current: false, badge: null },
