@@ -1,98 +1,131 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Users - app members with reputation and preferences
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   name: text("name").notNull(),
-  role: text("role").notNull(),
-  initials: text("initials").notNull(),
+  avatar: text("avatar"),
+  bio: text("bio"),
+  neighborhood: text("neighborhood"),
+  interests: text("interests"), // JSON array stored as text
+  socialEnergy: text("social_energy"), // "small", "medium", "large"
+  availableDays: text("available_days"), // JSON array stored as text
+  attendanceRate: integer("attendance_rate").default(100),
+  hostReliabilityScore: integer("host_reliability_score").default(100),
+  communityKarma: integer("community_karma").default(0),
+  credits: integer("credits").default(0),
+  attendanceStreak: integer("attendance_streak").default(0),
+  eventsAttended: integer("events_attended").default(0),
+  eventsHosted: integer("events_hosted").default(0),
+  onboardingComplete: boolean("onboarding_complete").default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const employees = pgTable("employees", {
+// Venues - local businesses and event spaces
+export const venues = pgTable("venues", {
   id: serial("id").primaryKey(),
-  employeeId: text("employee_id").notNull().unique(),
   name: text("name").notNull(),
-  company: text("company").notNull(),
-  startDate: timestamp("start_date").notNull(),
+  address: text("address").notNull(),
+  neighborhood: text("neighborhood").notNull(),
+  category: text("category").notNull(), // "cafe", "restaurant", "park", "studio", "bar", "community_center"
+  imageUrl: text("image_url"),
+  lat: real("lat").notNull(),
+  lng: real("lng").notNull(),
+  isPartner: boolean("is_partner").default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const cases = pgTable("cases", {
-  id: serial("id").primaryKey(),
-  employeeId: integer("employee_id").references(() => employees.id).notNull(),
-  caseManagerId: integer("case_manager_id").references(() => users.id).notNull(),
-  status: text("status").notNull(), // "active", "recovery", "returning", "long-term", "closed"
-  daysAbsent: integer("days_absent").notNull().default(0),
-  nextAction: text("next_action"),
-  absenceStartDate: timestamp("absence_start_date").notNull(),
-  recoveryPercentage: integer("recovery_percentage").default(0),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-
-export const tasks = pgTable("tasks", {
+// Events - hyperlocal gatherings
+export const events = pgTable("events", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
   description: text("description"),
-  priority: text("priority").notNull(), // "urgent", "high", "normal", "low"
-  status: text("status").notNull().default("pending"), // "pending", "in-progress", "completed"
-  dueDate: timestamp("due_date"),
-  caseId: integer("case_id").references(() => cases.id),
-  assignedTo: integer("assigned_to").references(() => users.id).notNull(),
-  createdBy: integer("created_by").references(() => users.id).notNull(),
+  hostId: integer("host_id").references(() => users.id).notNull(),
+  venueId: integer("venue_id").references(() => venues.id),
+  category: text("category").notNull(), // "food", "fitness", "arts", "music", "social", "learning", "outdoor", "wellness"
+  vibe: text("vibe"), // "chill", "energetic", "creative", "mindful", "adventurous"
+  date: timestamp("date").notNull(),
+  startTime: text("start_time").notNull(),
+  endTime: text("end_time"),
+  maxCapacity: integer("max_capacity").notNull().default(12),
+  currentAttendees: integer("current_attendees").notNull().default(0),
+  depositAmount: integer("deposit_amount").default(0), // in cents
+  creditsEarned: integer("credits_earned").default(10),
+  imageUrl: text("image_url"),
+  neighborhood: text("neighborhood").notNull(),
+  lat: real("lat"),
+  lng: real("lng"),
+  distance: real("distance"), // calculated field in miles
+  status: text("status").notNull().default("upcoming"), // "upcoming", "ongoing", "completed", "cancelled"
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const notes = pgTable("notes", {
+// RSVPs - attendance commitments
+export const rsvps = pgTable("rsvps", {
   id: serial("id").primaryKey(),
-  content: text("content").notNull(),
-  caseId: integer("case_id").references(() => cases.id).notNull(),
-  authorId: integer("author_id").references(() => users.id).notNull(),
-  isInternal: boolean("is_internal").default(false),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const activities = pgTable("activities", {
-  id: serial("id").primaryKey(),
-  description: text("description").notNull(),
-  type: text("type").notNull(), // "task_completed", "document_uploaded", "case_updated", etc.
   userId: integer("user_id").references(() => users.id).notNull(),
-  caseId: integer("case_id").references(() => cases.id),
+  eventId: integer("event_id").references(() => events.id).notNull(),
+  status: text("status").notNull().default("confirmed"), // "confirmed", "cancelled", "attended", "no_show"
+  depositPaid: boolean("deposit_paid").default(false),
+  checkedIn: boolean("checked_in").default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Credit transactions - local economy loop
+export const creditTransactions = pgTable("credit_transactions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  amount: integer("amount").notNull(), // positive = earned, negative = spent
+  type: text("type").notNull(), // "event_attendance", "hosting", "check_in", "redemption", "referral", "streak_bonus"
+  description: text("description").notNull(),
+  eventId: integer("event_id").references(() => events.id),
+  venueId: integer("venue_id").references(() => venues.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// AI Nudges - personalized suggestions
+export const nudges = pgTable("nudges", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  message: text("message").notNull(),
+  type: text("type").notNull(), // "suggestion", "reminder", "social", "streak", "milestone"
+  eventId: integer("event_id").references(() => events.id),
+  read: boolean("read").default(false),
+  actionLabel: text("action_label"), // "View Event", "Join Now", etc.
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
+  createdAt: true,
 });
 
-export const insertEmployeeSchema = createInsertSchema(employees).omit({
+export const insertVenueSchema = createInsertSchema(venues).omit({
   id: true,
   createdAt: true,
 });
 
-export const insertCaseSchema = createInsertSchema(cases).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
-export const insertTaskSchema = createInsertSchema(tasks).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
-export const insertNoteSchema = createInsertSchema(notes).omit({
+export const insertEventSchema = createInsertSchema(events).omit({
   id: true,
   createdAt: true,
 });
 
-export const insertActivitySchema = createInsertSchema(activities).omit({
+export const insertRsvpSchema = createInsertSchema(rsvps).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertCreditTransactionSchema = createInsertSchema(creditTransactions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertNudgeSchema = createInsertSchema(nudges).omit({
   id: true,
   createdAt: true,
 });
@@ -101,34 +134,46 @@ export const insertActivitySchema = createInsertSchema(activities).omit({
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 
-export type Employee = typeof employees.$inferSelect;
-export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;
+export type Venue = typeof venues.$inferSelect;
+export type InsertVenue = z.infer<typeof insertVenueSchema>;
 
-export type Case = typeof cases.$inferSelect;
-export type InsertCase = z.infer<typeof insertCaseSchema>;
+export type Event = typeof events.$inferSelect;
+export type InsertEvent = z.infer<typeof insertEventSchema>;
 
-export type Task = typeof tasks.$inferSelect;
-export type InsertTask = z.infer<typeof insertTaskSchema>;
+export type Rsvp = typeof rsvps.$inferSelect;
+export type InsertRsvp = z.infer<typeof insertRsvpSchema>;
 
-export type Note = typeof notes.$inferSelect;
-export type InsertNote = z.infer<typeof insertNoteSchema>;
+export type CreditTransaction = typeof creditTransactions.$inferSelect;
+export type InsertCreditTransaction = z.infer<typeof insertCreditTransactionSchema>;
 
-export type Activity = typeof activities.$inferSelect;
-export type InsertActivity = z.infer<typeof insertActivitySchema>;
+export type Nudge = typeof nudges.$inferSelect;
+export type InsertNudge = z.infer<typeof insertNudgeSchema>;
 
 // Extended types for API responses
-export type CaseWithEmployee = Case & {
-  employee: Employee;
-  taskCount: number;
+export type EventWithHost = Event & {
+  host: Pick<User, "id" | "name" | "avatar" | "hostReliabilityScore" | "communityKarma">;
+  venue?: Venue;
+  seatsLeft: number;
+  isRsvped: boolean;
 };
 
-export type TaskWithCase = Task & {
-  case?: Case & { employee: Employee };
+export type UserProfile = User & {
+  karmaLevel: string;
+  reliabilityBadge: string;
 };
 
-export type DashboardStats = {
-  activeCases: number;
-  pendingTasks: number;
-  completedTasksThisWeek: number;
-  avgResolutionDays: number;
+export type HomeFeed = {
+  curatedEvents: EventWithHost[];
+  nudges: Nudge[];
+  friendActivity: { userName: string; eventTitle: string; eventId: number }[];
 };
+
+// Onboarding data type
+export const onboardingSchema = z.object({
+  interests: z.array(z.string()),
+  availableDays: z.array(z.string()),
+  socialEnergy: z.enum(["small", "medium", "large"]),
+  neighborhood: z.string(),
+});
+
+export type OnboardingData = z.infer<typeof onboardingSchema>;

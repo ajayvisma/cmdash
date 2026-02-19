@@ -1,14 +1,14 @@
-import { 
-  users, employees, cases, tasks, notes, activities,
+import {
   type User, type InsertUser,
-  type Employee, type InsertEmployee,
-  type Case, type InsertCase,
-  type Task, type InsertTask,
-  type Note, type InsertNote,
-  type Activity, type InsertActivity,
-  type CaseWithEmployee,
-  type TaskWithCase,
-  type DashboardStats
+  type Venue, type InsertVenue,
+  type Event, type InsertEvent,
+  type Rsvp, type InsertRsvp,
+  type CreditTransaction, type InsertCreditTransaction,
+  type Nudge, type InsertNudge,
+  type EventWithHost,
+  type UserProfile,
+  type HomeFeed,
+  type OnboardingData,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -16,312 +16,501 @@ export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  updateUser(id: number, updates: Partial<User>): Promise<User | undefined>;
+  completeOnboarding(id: number, data: OnboardingData): Promise<User | undefined>;
 
-  // Employees
-  getEmployee(id: number): Promise<Employee | undefined>;
-  getEmployeeByEmployeeId(employeeId: string): Promise<Employee | undefined>;
-  createEmployee(employee: InsertEmployee): Promise<Employee>;
-  searchEmployees(query: string): Promise<Employee[]>;
+  // Venues
+  getVenue(id: number): Promise<Venue | undefined>;
+  getVenuesByNeighborhood(neighborhood: string): Promise<Venue[]>;
+  createVenue(venue: InsertVenue): Promise<Venue>;
 
-  // Cases
-  getCase(id: number): Promise<Case | undefined>;
-  getCaseWithEmployee(id: number): Promise<CaseWithEmployee | undefined>;
-  getCasesByManager(managerId: number): Promise<CaseWithEmployee[]>;
-  getActiveCases(managerId: number): Promise<CaseWithEmployee[]>;
-  createCase(caseData: InsertCase): Promise<Case>;
-  updateCase(id: number, updates: Partial<Case>): Promise<Case | undefined>;
+  // Events
+  getEvent(id: number): Promise<Event | undefined>;
+  getEventWithHost(id: number, userId: number): Promise<EventWithHost | undefined>;
+  getNearbyEvents(userId: number, neighborhood?: string): Promise<EventWithHost[]>;
+  getEventsByCategory(category: string, userId: number): Promise<EventWithHost[]>;
+  getUserHostedEvents(userId: number): Promise<Event[]>;
+  getUserAttendingEvents(userId: number): Promise<EventWithHost[]>;
+  createEvent(event: InsertEvent): Promise<Event>;
+  updateEvent(id: number, updates: Partial<Event>): Promise<Event | undefined>;
 
-  // Tasks
-  getTask(id: number): Promise<Task | undefined>;
-  getTaskWithCase(id: number): Promise<TaskWithCase | undefined>;
-  getTasksByAssignee(userId: number): Promise<TaskWithCase[]>;
-  getTodayTasks(userId: number): Promise<TaskWithCase[]>;
-  getPendingTasks(userId: number): Promise<TaskWithCase[]>;
-  createTask(task: InsertTask): Promise<Task>;
-  updateTask(id: number, updates: Partial<Task>): Promise<Task | undefined>;
+  // RSVPs
+  createRsvp(rsvp: InsertRsvp): Promise<Rsvp>;
+  cancelRsvp(userId: number, eventId: number): Promise<void>;
+  getRsvpsByEvent(eventId: number): Promise<Rsvp[]>;
+  getRsvpsByUser(userId: number): Promise<Rsvp[]>;
+  getUserRsvpForEvent(userId: number, eventId: number): Promise<Rsvp | undefined>;
 
-  // Notes
-  getCaseNotes(caseId: number): Promise<Note[]>;
-  createNote(note: InsertNote): Promise<Note>;
+  // Credits
+  getCreditTransactions(userId: number): Promise<CreditTransaction[]>;
+  createCreditTransaction(tx: InsertCreditTransaction): Promise<CreditTransaction>;
+  getUserCredits(userId: number): Promise<number>;
 
-  // Activities
-  getRecentActivities(userId: number, limit?: number): Promise<Activity[]>;
-  createActivity(activity: InsertActivity): Promise<Activity>;
+  // Nudges
+  getNudges(userId: number): Promise<Nudge[]>;
+  getUnreadNudges(userId: number): Promise<Nudge[]>;
+  createNudge(nudge: InsertNudge): Promise<Nudge>;
+  markNudgeRead(id: number): Promise<void>;
 
-  // Dashboard
-  getDashboardStats(userId: number): Promise<DashboardStats>;
+  // Home Feed
+  getHomeFeed(userId: number): Promise<HomeFeed>;
+
+  // Profile
+  getUserProfile(id: number): Promise<UserProfile | undefined>;
+}
+
+function getKarmaLevel(karma: number): string {
+  if (karma >= 500) return "Legend";
+  if (karma >= 200) return "Connector";
+  if (karma >= 100) return "Regular";
+  if (karma >= 50) return "Explorer";
+  return "Newcomer";
+}
+
+function getReliabilityBadge(score: number): string {
+  if (score >= 95) return "Rock Solid";
+  if (score >= 85) return "Reliable";
+  if (score >= 70) return "Good";
+  return "Building";
 }
 
 export class MemStorage implements IStorage {
   private users: Map<number, User>;
-  private employees: Map<number, Employee>;
-  private cases: Map<number, Case>;
-  private tasks: Map<number, Task>;
-  private notes: Map<number, Note>;
-  private activities: Map<number, Activity>;
+  private venues: Map<number, Venue>;
+  private events: Map<number, Event>;
+  private rsvps: Map<number, Rsvp>;
+  private creditTransactions: Map<number, CreditTransaction>;
+  private nudges: Map<number, Nudge>;
   private currentId: number;
 
   constructor() {
     this.users = new Map();
-    this.employees = new Map();
-    this.cases = new Map();
-    this.tasks = new Map();
-    this.notes = new Map();
-    this.activities = new Map();
+    this.venues = new Map();
+    this.events = new Map();
+    this.rsvps = new Map();
+    this.creditTransactions = new Map();
+    this.nudges = new Map();
     this.currentId = 1;
-
-    // Initialize with sample data
     this.initializeSampleData();
   }
 
   private async initializeSampleData() {
-    // Create sample user (case manager)
-    const user = await this.createUser({
-      username: "geraldine",
+    // Create users
+    const user1 = await this.createUser({
+      username: "hari",
       password: "password",
-      name: "Geraldine van Hees",
-      role: "Case Manager",
-      initials: "GH"
+      name: "Hari Kumar",
+      avatar: null,
+      bio: "Foodie and yoga enthusiast. New to the neighborhood!",
+      neighborhood: "Williamsburg",
+      interests: JSON.stringify(["food", "fitness", "wellness", "music"]),
+      socialEnergy: "small",
+      availableDays: JSON.stringify(["friday", "saturday", "sunday"]),
+      attendanceRate: 92,
+      hostReliabilityScore: 95,
+      communityKarma: 145,
+      credits: 320,
+      attendanceStreak: 5,
+      eventsAttended: 18,
+      eventsHosted: 3,
+      onboardingComplete: true,
     });
 
-    // Create sample employees
-    const employee1 = await this.createEmployee({
-      employeeId: "EMP001",
-      name: "John Smith",
-      company: "Rabobank",
-      startDate: new Date("2020-01-15")
+    const user2 = await this.createUser({
+      username: "maya",
+      password: "password",
+      name: "Maya Chen",
+      avatar: null,
+      bio: "Artist and coffee lover. Always up for gallery walks.",
+      neighborhood: "Williamsburg",
+      interests: JSON.stringify(["arts", "food", "social"]),
+      socialEnergy: "medium",
+      availableDays: JSON.stringify(["saturday", "sunday"]),
+      attendanceRate: 97,
+      hostReliabilityScore: 100,
+      communityKarma: 280,
+      credits: 540,
+      attendanceStreak: 12,
+      eventsAttended: 34,
+      eventsHosted: 8,
+      onboardingComplete: true,
     });
 
-    const employee2 = await this.createEmployee({
-      employeeId: "EMP002", 
-      name: "Sarah Johnson",
-      company: "KPN",
-      startDate: new Date("2019-06-20")
+    const user3 = await this.createUser({
+      username: "alex",
+      password: "password",
+      name: "Alex Rivera",
+      avatar: null,
+      bio: "Music producer and vinyl collector. Let's jam!",
+      neighborhood: "Greenpoint",
+      interests: JSON.stringify(["music", "social", "food"]),
+      socialEnergy: "large",
+      availableDays: JSON.stringify(["thursday", "friday", "saturday"]),
+      attendanceRate: 88,
+      hostReliabilityScore: 90,
+      communityKarma: 190,
+      credits: 210,
+      attendanceStreak: 3,
+      eventsAttended: 25,
+      eventsHosted: 6,
+      onboardingComplete: true,
     });
 
-    const employee3 = await this.createEmployee({
-      employeeId: "EMP003",
-      name: "Michael Brown", 
-      company: "Szamen",
-      startDate: new Date("2021-03-10")
+    const user4 = await this.createUser({
+      username: "priya",
+      password: "password",
+      name: "Priya Patel",
+      avatar: null,
+      bio: "Bookworm and tea enthusiast. Love thoughtful conversations.",
+      neighborhood: "Williamsburg",
+      interests: JSON.stringify(["learning", "wellness", "food"]),
+      socialEnergy: "small",
+      availableDays: JSON.stringify(["wednesday", "saturday"]),
+      attendanceRate: 100,
+      hostReliabilityScore: 98,
+      communityKarma: 320,
+      credits: 680,
+      attendanceStreak: 8,
+      eventsAttended: 42,
+      eventsHosted: 12,
+      onboardingComplete: true,
     });
 
-    const employee4 = await this.createEmployee({
-      employeeId: "EMP004",
-      name: "Emma Wilson",
-      company: "ING Bank",
-      startDate: new Date("2020-09-12")
+    const user5 = await this.createUser({
+      username: "sam",
+      password: "password",
+      name: "Sam Okafor",
+      avatar: null,
+      bio: "Runner and home cook. Training for my first marathon!",
+      neighborhood: "Greenpoint",
+      interests: JSON.stringify(["fitness", "food", "outdoor"]),
+      socialEnergy: "medium",
+      availableDays: JSON.stringify(["monday", "wednesday", "saturday"]),
+      attendanceRate: 85,
+      hostReliabilityScore: 88,
+      communityKarma: 95,
+      credits: 150,
+      attendanceStreak: 2,
+      eventsAttended: 12,
+      eventsHosted: 2,
+      onboardingComplete: true,
     });
 
-    const employee5 = await this.createEmployee({
-      employeeId: "EMP005",
-      name: "David Chen",
-      company: "Philips",
-      startDate: new Date("2019-02-25")
+    // Create venues
+    const venue1 = await this.createVenue({
+      name: "Devocion Coffee",
+      address: "69 Grand St, Brooklyn",
+      neighborhood: "Williamsburg",
+      category: "cafe",
+      imageUrl: null,
+      lat: 40.7143,
+      lng: -73.9613,
+      isPartner: true,
     });
 
-    const employee6 = await this.createEmployee({
-      employeeId: "EMP006",
-      name: "Lisa Thompson",
-      company: "Unilever",
-      startDate: new Date("2022-01-08")
+    const venue2 = await this.createVenue({
+      name: "Domino Park",
+      address: "15 River St, Brooklyn",
+      neighborhood: "Williamsburg",
+      category: "park",
+      imageUrl: null,
+      lat: 40.7138,
+      lng: -73.9685,
+      isPartner: false,
     });
 
-    // Create sample cases
-    const case1 = await this.createCase({
-      employeeId: employee1.id,
-      caseManagerId: user.id,
-      status: "long-term",
-      daysAbsent: 45,
-      nextAction: "UWV Evaluation",
-      absenceStartDate: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000)
+    const venue3 = await this.createVenue({
+      name: "The Yoga Room",
+      address: "112 N 6th St, Brooklyn",
+      neighborhood: "Williamsburg",
+      category: "studio",
+      imageUrl: null,
+      lat: 40.7181,
+      lng: -73.9612,
+      isPartner: true,
     });
 
-    const case2 = await this.createCase({
-      employeeId: employee2.id,
-      caseManagerId: user.id,
-      status: "recovery",
-      daysAbsent: 12,
-      nextAction: "Medical Check",
-      absenceStartDate: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000),
-      recoveryPercentage: 50
+    const venue4 = await this.createVenue({
+      name: "Rough Trade",
+      address: "64 N 9th St, Brooklyn",
+      neighborhood: "Williamsburg",
+      category: "bar",
+      imageUrl: null,
+      lat: 40.7178,
+      lng: -73.9583,
+      isPartner: true,
     });
 
-    const case3 = await this.createCase({
-      employeeId: employee3.id,
-      caseManagerId: user.id,
-      status: "returning",
-      daysAbsent: 8,
-      nextAction: "Action Plan",
-      absenceStartDate: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
-      recoveryPercentage: 80
+    const venue5 = await this.createVenue({
+      name: "Five Leaves",
+      address: "18 Bedford Ave, Brooklyn",
+      neighborhood: "Greenpoint",
+      category: "restaurant",
+      imageUrl: null,
+      lat: 40.7226,
+      lng: -73.9569,
+      isPartner: true,
     });
 
-    const case4 = await this.createCase({
-      employeeId: employee4.id,
-      caseManagerId: user.id,
-      status: "active",
-      daysAbsent: 3,
-      nextAction: "First Assessment",
-      absenceStartDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+    const venue6 = await this.createVenue({
+      name: "Transmitter Park",
+      address: "Greenpoint Ave, Brooklyn",
+      neighborhood: "Greenpoint",
+      category: "park",
+      imageUrl: null,
+      lat: 40.7292,
+      lng: -73.9601,
+      isPartner: false,
     });
 
-    const case5 = await this.createCase({
-      employeeId: employee5.id,
-      caseManagerId: user.id,
-      status: "recovery",
-      daysAbsent: 35,
-      nextAction: "Progress Review",
-      absenceStartDate: new Date(Date.now() - 35 * 24 * 60 * 60 * 1000),
-      recoveryPercentage: 70
+    const venue7 = await this.createVenue({
+      name: "Brooklyn Art Library",
+      address: "103 N 3rd St, Brooklyn",
+      neighborhood: "Williamsburg",
+      category: "community_center",
+      imageUrl: null,
+      lat: 40.7168,
+      lng: -73.9619,
+      isPartner: true,
     });
 
-    const case6 = await this.createCase({
-      employeeId: employee6.id,
-      caseManagerId: user.id,
-      status: "long-term",
-      daysAbsent: 67,
-      nextAction: "Disability Assessment",
-      absenceStartDate: new Date(Date.now() - 67 * 24 * 60 * 60 * 1000)
+    // Create events
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dayAfter = new Date();
+    dayAfter.setDate(dayAfter.getDate() + 2);
+    const thisSaturday = new Date();
+    thisSaturday.setDate(thisSaturday.getDate() + (6 - thisSaturday.getDay()));
+    const nextWeek = new Date();
+    nextWeek.setDate(nextWeek.getDate() + 7);
+
+    const event1 = await this.createEvent({
+      title: "Morning Yoga in the Park",
+      description: "Start your day right with a gentle flow session. All levels welcome. Bring your own mat!",
+      hostId: user2.id,
+      venueId: venue2.id,
+      category: "fitness",
+      vibe: "mindful",
+      date: tomorrow,
+      startTime: "7:30 AM",
+      endTime: "8:30 AM",
+      maxCapacity: 12,
+      currentAttendees: 8,
+      depositAmount: 500,
+      creditsEarned: 15,
+      imageUrl: null,
+      neighborhood: "Williamsburg",
+      lat: 40.7138,
+      lng: -73.9685,
+      distance: 0.3,
+      status: "upcoming",
     });
 
-    // Create sample tasks
-    await this.createTask({
-      title: "Review UWV Documentation - John Smith",
-      description: "Complete periodic evaluation form and submit to UWV before deadline",
-      priority: "urgent",
-      dueDate: new Date(),
-      caseId: case1.id,
-      assignedTo: user.id,
-      createdBy: user.id
+    const event2 = await this.createEvent({
+      title: "Homemade Pasta Night",
+      description: "Learn to make fresh pasta from scratch. We'll be making tagliatelle with a seasonal ragu. Ingredients provided.",
+      hostId: user4.id,
+      venueId: venue5.id,
+      category: "food",
+      vibe: "chill",
+      date: thisSaturday,
+      startTime: "6:30 PM",
+      endTime: "9:00 PM",
+      maxCapacity: 8,
+      currentAttendees: 6,
+      depositAmount: 1500,
+      creditsEarned: 25,
+      imageUrl: null,
+      neighborhood: "Greenpoint",
+      lat: 40.7226,
+      lng: -73.9569,
+      distance: 0.8,
+      status: "upcoming",
     });
 
-    await this.createTask({
-      title: "Follow-up Medical Appointment - Sarah Johnson",
-      description: "Schedule follow-up with company doctor for assessment",
-      priority: "high",
-      dueDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      caseId: case2.id,
-      assignedTo: user.id,
-      createdBy: user.id
+    const event3 = await this.createEvent({
+      title: "Vinyl Listening Session",
+      description: "Bring your favorite records and share the stories behind them. Great vibes, great sound system, great people.",
+      hostId: user3.id,
+      venueId: venue4.id,
+      category: "music",
+      vibe: "chill",
+      date: tomorrow,
+      startTime: "8:00 PM",
+      endTime: "10:30 PM",
+      maxCapacity: 15,
+      currentAttendees: 9,
+      depositAmount: 0,
+      creditsEarned: 10,
+      imageUrl: null,
+      neighborhood: "Williamsburg",
+      lat: 40.7178,
+      lng: -73.9583,
+      distance: 0.4,
+      status: "upcoming",
     });
 
-    await this.createTask({
-      title: "Create Action Plan - Michael Brown",
-      description: "Draft return-to-work action plan with employer recommendations",
-      priority: "normal",
-      dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
-      caseId: case3.id,
-      assignedTo: user.id,
-      createdBy: user.id
+    const event4 = await this.createEvent({
+      title: "Sketch & Sip",
+      description: "Bring your sketchbook and a drink. We'll draw the sunset over the Manhattan skyline. No experience needed.",
+      hostId: user2.id,
+      venueId: venue6.id,
+      category: "arts",
+      vibe: "creative",
+      date: dayAfter,
+      startTime: "5:00 PM",
+      endTime: "7:00 PM",
+      maxCapacity: 10,
+      currentAttendees: 4,
+      depositAmount: 0,
+      creditsEarned: 15,
+      imageUrl: null,
+      neighborhood: "Greenpoint",
+      lat: 40.7292,
+      lng: -73.9601,
+      distance: 1.1,
+      status: "upcoming",
     });
 
-    await this.createTask({
-      title: "Contact HR Department - John Smith",
-      description: "Discuss workplace adjustments and reintegration timeline",
-      priority: "high",
-      dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-      caseId: case1.id,
-      assignedTo: user.id,
-      createdBy: user.id
+    const event5 = await this.createEvent({
+      title: "Book Club: Fiction picks",
+      description: "This month we're reading 'Tomorrow, and Tomorrow, and Tomorrow'. Join for a thoughtful discussion and chai.",
+      hostId: user4.id,
+      venueId: venue1.id,
+      category: "learning",
+      vibe: "mindful",
+      date: nextWeek,
+      startTime: "3:00 PM",
+      endTime: "5:00 PM",
+      maxCapacity: 8,
+      currentAttendees: 5,
+      depositAmount: 0,
+      creditsEarned: 20,
+      imageUrl: null,
+      neighborhood: "Williamsburg",
+      lat: 40.7143,
+      lng: -73.9613,
+      distance: 0.2,
+      status: "upcoming",
     });
 
-    await this.createTask({
-      title: "Process Insurance Claims - Sarah Johnson",
-      description: "Submit medical reports and claim documentation to insurance provider",
-      priority: "normal",
-      dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
-      caseId: case2.id,
-      assignedTo: user.id,
-      createdBy: user.id
+    const event6 = await this.createEvent({
+      title: "5K Fun Run",
+      description: "Easy-paced group run along the waterfront. All paces welcome! We'll grab coffee after.",
+      hostId: user5.id,
+      venueId: venue6.id,
+      category: "fitness",
+      vibe: "energetic",
+      date: thisSaturday,
+      startTime: "8:00 AM",
+      endTime: "9:30 AM",
+      maxCapacity: 20,
+      currentAttendees: 11,
+      depositAmount: 0,
+      creditsEarned: 15,
+      imageUrl: null,
+      neighborhood: "Greenpoint",
+      lat: 40.7292,
+      lng: -73.9601,
+      distance: 1.0,
+      status: "upcoming",
     });
 
-    await this.createTask({
-      title: "Schedule Team Meeting",
-      description: "Coordinate with case management team for weekly review",
-      priority: "low",
-      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      assignedTo: user.id,
-      createdBy: user.id
+    const event7 = await this.createEvent({
+      title: "Jazz Night at Rough Trade",
+      description: "Local jazz trio performing live. Intimate setting with craft cocktails. Limited seats.",
+      hostId: user3.id,
+      venueId: venue4.id,
+      category: "music",
+      vibe: "chill",
+      date: dayAfter,
+      startTime: "9:00 PM",
+      endTime: "11:00 PM",
+      maxCapacity: 10,
+      currentAttendees: 8,
+      depositAmount: 1000,
+      creditsEarned: 20,
+      imageUrl: null,
+      neighborhood: "Williamsburg",
+      lat: 40.7178,
+      lng: -73.9583,
+      distance: 0.4,
+      status: "upcoming",
     });
 
-    await this.createTask({
-      title: "Review Medical Reports - Michael Brown",
-      description: "Analyze latest medical assessment and update case status",
-      priority: "high",
-      dueDate: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000),
-      caseId: case3.id,
-      assignedTo: user.id,
-      createdBy: user.id
+    const event8 = await this.createEvent({
+      title: "Community Potluck",
+      description: "Bring a dish to share! Theme: comfort food from home. Great way to meet your neighbors.",
+      hostId: user1.id,
+      venueId: venue7.id,
+      category: "social",
+      vibe: "chill",
+      date: nextWeek,
+      startTime: "12:00 PM",
+      endTime: "3:00 PM",
+      maxCapacity: 16,
+      currentAttendees: 7,
+      depositAmount: 0,
+      creditsEarned: 10,
+      imageUrl: null,
+      neighborhood: "Williamsburg",
+      lat: 40.7168,
+      lng: -73.9619,
+      distance: 0.3,
+      status: "upcoming",
     });
 
-    // Add more tasks for today
-    await this.createTask({
-      title: "Update Employee Portal - John Smith",
-      description: "Log progress notes and update return-to-work timeline",
-      priority: "normal",
-      dueDate: new Date(),
-      caseId: case1.id,
-      assignedTo: user.id,
-      createdBy: user.id
-    });
+    // Create RSVPs
+    await this.createRsvp({ userId: user1.id, eventId: event1.id, status: "confirmed", depositPaid: true, checkedIn: false });
+    await this.createRsvp({ userId: user1.id, eventId: event3.id, status: "confirmed", depositPaid: false, checkedIn: false });
+    await this.createRsvp({ userId: user2.id, eventId: event2.id, status: "confirmed", depositPaid: true, checkedIn: false });
+    await this.createRsvp({ userId: user3.id, eventId: event1.id, status: "confirmed", depositPaid: true, checkedIn: false });
+    await this.createRsvp({ userId: user4.id, eventId: event3.id, status: "confirmed", depositPaid: false, checkedIn: false });
+    await this.createRsvp({ userId: user5.id, eventId: event6.id, status: "confirmed", depositPaid: false, checkedIn: false });
+    await this.createRsvp({ userId: user1.id, eventId: event5.id, status: "confirmed", depositPaid: false, checkedIn: false });
 
-    await this.createTask({
-      title: "Call Insurance Provider - Sarah Johnson",
-      description: "Follow up on claim status and required documentation",
-      priority: "urgent",
-      dueDate: new Date(),
-      caseId: case2.id,
-      assignedTo: user.id,
-      createdBy: user.id
-    });
+    // Credit transactions for user1
+    await this.createCreditTransaction({ userId: user1.id, amount: 15, type: "event_attendance", description: "Attended Morning Yoga", eventId: event1.id, venueId: null });
+    await this.createCreditTransaction({ userId: user1.id, amount: 25, type: "event_attendance", description: "Attended Pasta Night", eventId: event2.id, venueId: null });
+    await this.createCreditTransaction({ userId: user1.id, amount: 10, type: "hosting", description: "Hosted Community Potluck", eventId: event8.id, venueId: null });
+    await this.createCreditTransaction({ userId: user1.id, amount: 20, type: "check_in", description: "Checked in at Devocion Coffee", eventId: null, venueId: venue1.id });
+    await this.createCreditTransaction({ userId: user1.id, amount: -50, type: "redemption", description: "Redeemed at Five Leaves", eventId: null, venueId: venue5.id });
+    await this.createCreditTransaction({ userId: user1.id, amount: 30, type: "streak_bonus", description: "5-event attendance streak!", eventId: null, venueId: null });
+    await this.createCreditTransaction({ userId: user1.id, amount: 50, type: "referral", description: "Referred a friend", eventId: null, venueId: null });
+    await this.createCreditTransaction({ userId: user1.id, amount: -25, type: "redemption", description: "Exclusive event access", eventId: event7.id, venueId: null });
 
-    await this.createTask({
-      title: "Prepare Weekly Report",
-      description: "Compile case statistics and progress summaries for management",
-      priority: "high",
-      dueDate: new Date(),
-      assignedTo: user.id,
-      createdBy: user.id
+    // Nudges for user1
+    await this.createNudge({
+      userId: user1.id,
+      message: "You've had a busy week. How about something low-key this weekend?",
+      type: "suggestion",
+      eventId: event5.id,
+      read: false,
+      actionLabel: "View Event",
     });
-
-    await this.createTask({
-      title: "Review Workplace Assessment - Michael Brown",
-      description: "Evaluate ergonomic recommendations and accommodation requests",
-      priority: "normal",
-      dueDate: new Date(),
-      caseId: case3.id,
-      assignedTo: user.id,
-      createdBy: user.id
+    await this.createNudge({
+      userId: user1.id,
+      message: "Two seats left for Jazz Night near you.",
+      type: "reminder",
+      eventId: event7.id,
+      read: false,
+      actionLabel: "Grab a Seat",
     });
-
-    await this.createTask({
-      title: "Schedule Medical Review - John Smith",
-      description: "Coordinate appointment with occupational health specialist",
-      priority: "high",
-      dueDate: new Date(),
-      caseId: case1.id,
-      assignedTo: user.id,
-      createdBy: user.id
+    await this.createNudge({
+      userId: user1.id,
+      message: "Maya is attending Sketch & Sip -- join her?",
+      type: "social",
+      eventId: event4.id,
+      read: false,
+      actionLabel: "Join",
     });
-
-    // Create sample activities
-    await this.createActivity({
-      description: "Task completed for Emma Wilson",
-      type: "task_completed",
-      userId: user.id
-    });
-
-    await this.createActivity({
-      description: "New document uploaded by David Chen",
-      type: "document_uploaded",
-      userId: user.id
-    });
-
-    await this.createActivity({
-      description: "Evaluation due for Lisa Thompson",
-      type: "evaluation_due",
-      userId: user.id
+    await this.createNudge({
+      userId: user1.id,
+      message: "You're on a 5-event streak! Keep it going this weekend.",
+      type: "streak",
+      eventId: null,
+      read: true,
+      actionLabel: null,
     });
   }
 
@@ -331,326 +520,343 @@ export class MemStorage implements IStorage {
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(user => user.username === username);
+    return Array.from(this.users.values()).find(u => u.username === username);
   }
 
   async createUser(userData: InsertUser): Promise<User> {
     const id = this.currentId++;
-    const user: User = { ...userData, id };
+    const user: User = {
+      id,
+      username: userData.username,
+      password: userData.password,
+      name: userData.name,
+      avatar: userData.avatar ?? null,
+      bio: userData.bio ?? null,
+      neighborhood: userData.neighborhood ?? null,
+      interests: userData.interests ?? null,
+      socialEnergy: userData.socialEnergy ?? null,
+      availableDays: userData.availableDays ?? null,
+      attendanceRate: userData.attendanceRate ?? 100,
+      hostReliabilityScore: userData.hostReliabilityScore ?? 100,
+      communityKarma: userData.communityKarma ?? 0,
+      credits: userData.credits ?? 0,
+      attendanceStreak: userData.attendanceStreak ?? 0,
+      eventsAttended: userData.eventsAttended ?? 0,
+      eventsHosted: userData.eventsHosted ?? 0,
+      onboardingComplete: userData.onboardingComplete ?? false,
+      createdAt: new Date(),
+    };
     this.users.set(id, user);
     return user;
   }
 
-  // Employee methods
-  async getEmployee(id: number): Promise<Employee | undefined> {
-    return this.employees.get(id);
+  async updateUser(id: number, updates: Partial<User>): Promise<User | undefined> {
+    const user = this.users.get(id);
+    if (!user) return undefined;
+    const updated = { ...user, ...updates };
+    this.users.set(id, updated);
+    return updated;
   }
 
-  async getEmployeeByEmployeeId(employeeId: string): Promise<Employee | undefined> {
-    return Array.from(this.employees.values()).find(emp => emp.employeeId === employeeId);
+  async completeOnboarding(id: number, data: OnboardingData): Promise<User | undefined> {
+    return this.updateUser(id, {
+      interests: JSON.stringify(data.interests),
+      availableDays: JSON.stringify(data.availableDays),
+      socialEnergy: data.socialEnergy,
+      neighborhood: data.neighborhood,
+      onboardingComplete: true,
+    });
   }
 
-  async createEmployee(employeeData: InsertEmployee): Promise<Employee> {
-    const id = this.currentId++;
-    const employee: Employee = { 
-      ...employeeData, 
-      id, 
-      createdAt: new Date() 
-    };
-    this.employees.set(id, employee);
-    return employee;
+  // Venue methods
+  async getVenue(id: number): Promise<Venue | undefined> {
+    return this.venues.get(id);
   }
 
-  async searchEmployees(query: string): Promise<Employee[]> {
-    const lowerQuery = query.toLowerCase();
-    return Array.from(this.employees.values()).filter(emp => 
-      emp.name.toLowerCase().includes(lowerQuery) ||
-      emp.employeeId.toLowerCase().includes(lowerQuery) ||
-      emp.company.toLowerCase().includes(lowerQuery)
+  async getVenuesByNeighborhood(neighborhood: string): Promise<Venue[]> {
+    return Array.from(this.venues.values()).filter(v =>
+      v.neighborhood.toLowerCase() === neighborhood.toLowerCase()
     );
   }
 
-  // Case methods
-  async getCase(id: number): Promise<Case | undefined> {
-    return this.cases.get(id);
+  async createVenue(venueData: InsertVenue): Promise<Venue> {
+    const id = this.currentId++;
+    const venue: Venue = {
+      id,
+      name: venueData.name,
+      address: venueData.address,
+      neighborhood: venueData.neighborhood,
+      category: venueData.category,
+      imageUrl: venueData.imageUrl ?? null,
+      lat: venueData.lat,
+      lng: venueData.lng,
+      isPartner: venueData.isPartner ?? false,
+      createdAt: new Date(),
+    };
+    this.venues.set(id, venue);
+    return venue;
   }
 
-  async getCaseWithEmployee(id: number): Promise<CaseWithEmployee | undefined> {
-    const caseData = this.cases.get(id);
-    if (!caseData) return undefined;
+  // Event methods
+  async getEvent(id: number): Promise<Event | undefined> {
+    return this.events.get(id);
+  }
 
-    const employee = this.employees.get(caseData.employeeId);
-    if (!employee) return undefined;
-
-    const taskCount = Array.from(this.tasks.values()).filter(t => t.caseId === id).length;
+  private async enrichEvent(event: Event, userId: number): Promise<EventWithHost> {
+    const host = await this.getUser(event.hostId);
+    const venue = event.venueId ? await this.getVenue(event.venueId) : undefined;
+    const rsvp = await this.getUserRsvpForEvent(userId, event.id);
 
     return {
-      ...caseData,
-      employee,
-      taskCount
+      ...event,
+      host: {
+        id: host!.id,
+        name: host!.name,
+        avatar: host!.avatar,
+        hostReliabilityScore: host!.hostReliabilityScore,
+        communityKarma: host!.communityKarma,
+      },
+      venue,
+      seatsLeft: event.maxCapacity - event.currentAttendees,
+      isRsvped: !!rsvp && rsvp.status === "confirmed",
     };
   }
 
-  async getCasesByManager(managerId: number): Promise<CaseWithEmployee[]> {
-    const managerCases = Array.from(this.cases.values()).filter(c => c.caseManagerId === managerId);
-    const result: CaseWithEmployee[] = [];
+  async getEventWithHost(id: number, userId: number): Promise<EventWithHost | undefined> {
+    const event = this.events.get(id);
+    if (!event) return undefined;
+    return this.enrichEvent(event, userId);
+  }
 
-    for (const caseData of managerCases) {
-      const employee = this.employees.get(caseData.employeeId);
-      if (employee) {
-        const taskCount = Array.from(this.tasks.values()).filter(t => t.caseId === caseData.id).length;
-        result.push({
-          ...caseData,
-          employee,
-          taskCount
-        });
-      }
+  async getNearbyEvents(userId: number, neighborhood?: string): Promise<EventWithHost[]> {
+    const user = await this.getUser(userId);
+    const hood = neighborhood || user?.neighborhood || "Williamsburg";
+    const allEvents = Array.from(this.events.values())
+      .filter(e => e.status === "upcoming")
+      .sort((a, b) => (a.distance || 99) - (b.distance || 99));
+
+    const result: EventWithHost[] = [];
+    for (const event of allEvents) {
+      result.push(await this.enrichEvent(event, userId));
     }
-
     return result;
   }
 
-  async getActiveCases(managerId: number): Promise<CaseWithEmployee[]> {
-    const activeCases = Array.from(this.cases.values()).filter(c => 
-      c.caseManagerId === managerId && c.status !== "closed"
-    );
-    const result: CaseWithEmployee[] = [];
+  async getEventsByCategory(category: string, userId: number): Promise<EventWithHost[]> {
+    const events = Array.from(this.events.values())
+      .filter(e => e.category === category && e.status === "upcoming");
 
-    for (const caseData of activeCases) {
-      const employee = this.employees.get(caseData.employeeId);
-      if (employee) {
-        const taskCount = Array.from(this.tasks.values()).filter(t => t.caseId === caseData.id).length;
-        result.push({
-          ...caseData,
-          employee,
-          taskCount
-        });
-      }
+    const result: EventWithHost[] = [];
+    for (const event of events) {
+      result.push(await this.enrichEvent(event, userId));
     }
-
     return result;
   }
 
-  async createCase(caseData: InsertCase): Promise<Case> {
+  async getUserHostedEvents(userId: number): Promise<Event[]> {
+    return Array.from(this.events.values()).filter(e => e.hostId === userId);
+  }
+
+  async getUserAttendingEvents(userId: number): Promise<EventWithHost[]> {
+    const userRsvps = Array.from(this.rsvps.values())
+      .filter(r => r.userId === userId && r.status === "confirmed");
+
+    const result: EventWithHost[] = [];
+    for (const rsvp of userRsvps) {
+      const event = this.events.get(rsvp.eventId);
+      if (event && event.status === "upcoming") {
+        result.push(await this.enrichEvent(event, userId));
+      }
+    }
+    return result;
+  }
+
+  async createEvent(eventData: InsertEvent): Promise<Event> {
     const id = this.currentId++;
-    const now = new Date();
-    const newCase: Case = { 
-      ...caseData,
-      id, 
-      createdAt: now,
-      updatedAt: now,
-      daysAbsent: caseData.daysAbsent ?? 0,
-      nextAction: caseData.nextAction ?? null,
-      recoveryPercentage: caseData.recoveryPercentage ?? null
-    };
-    this.cases.set(id, newCase);
-    return newCase;
-  }
-
-  async updateCase(id: number, updates: Partial<Case>): Promise<Case | undefined> {
-    const existingCase = this.cases.get(id);
-    if (!existingCase) return undefined;
-
-    const updatedCase: Case = {
-      ...existingCase,
-      ...updates,
-      updatedAt: new Date()
-    };
-    this.cases.set(id, updatedCase);
-    return updatedCase;
-  }
-
-  // Task methods
-  async getTask(id: number): Promise<Task | undefined> {
-    return this.tasks.get(id);
-  }
-
-  async getTaskWithCase(id: number): Promise<TaskWithCase | undefined> {
-    const task = this.tasks.get(id);
-    if (!task) return undefined;
-
-    if (task.caseId) {
-      const caseWithEmployee = await this.getCaseWithEmployee(task.caseId);
-      return {
-        ...task,
-        case: caseWithEmployee
-      };
-    }
-
-    return task;
-  }
-
-  async getTasksByAssignee(userId: number): Promise<TaskWithCase[]> {
-    const userTasks = Array.from(this.tasks.values()).filter(t => t.assignedTo === userId);
-    const result: TaskWithCase[] = [];
-
-    for (const task of userTasks) {
-      if (task.caseId) {
-        const caseWithEmployee = await this.getCaseWithEmployee(task.caseId);
-        result.push({
-          ...task,
-          case: caseWithEmployee
-        });
-      } else {
-        result.push(task);
-      }
-    }
-
-    return result;
-  }
-
-  async getTodayTasks(userId: number): Promise<TaskWithCase[]> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    const todayTasks = Array.from(this.tasks.values()).filter(t => 
-      t.assignedTo === userId && 
-      t.status === "pending" &&
-      t.dueDate && 
-      t.dueDate >= today && 
-      t.dueDate < tomorrow
-    );
-
-    const result: TaskWithCase[] = [];
-    for (const task of todayTasks) {
-      if (task.caseId) {
-        const caseWithEmployee = await this.getCaseWithEmployee(task.caseId);
-        result.push({
-          ...task,
-          case: caseWithEmployee
-        });
-      } else {
-        result.push(task);
-      }
-    }
-
-    return result;
-  }
-
-  async getPendingTasks(userId: number): Promise<TaskWithCase[]> {
-    const pendingTasks = Array.from(this.tasks.values()).filter(t => 
-      t.assignedTo === userId && t.status === "pending"
-    );
-
-    const result: TaskWithCase[] = [];
-    for (const task of pendingTasks) {
-      if (task.caseId) {
-        const caseWithEmployee = await this.getCaseWithEmployee(task.caseId);
-        result.push({
-          ...task,
-          case: caseWithEmployee
-        });
-      } else {
-        result.push(task);
-      }
-    }
-
-    return result;
-  }
-
-  async createTask(taskData: InsertTask): Promise<Task> {
-    const id = this.currentId++;
-    const now = new Date();
-    const task: Task = { 
-      ...taskData, 
-      id, 
-      createdAt: now,
-      updatedAt: now,
-      status: taskData.status ?? "pending",
-      description: taskData.description ?? null,
-      caseId: taskData.caseId ?? null,
-      dueDate: taskData.dueDate ?? null
-    };
-    this.tasks.set(id, task);
-    return task;
-  }
-
-  async updateTask(id: number, updates: Partial<Task>): Promise<Task | undefined> {
-    const existingTask = this.tasks.get(id);
-    if (!existingTask) return undefined;
-
-    const updatedTask: Task = {
-      ...existingTask,
-      ...updates,
-      updatedAt: new Date()
-    };
-    this.tasks.set(id, updatedTask);
-    return updatedTask;
-  }
-
-  // Note methods
-  async getCaseNotes(caseId: number): Promise<Note[]> {
-    return Array.from(this.notes.values()).filter(n => n.caseId === caseId);
-  }
-
-  async createNote(noteData: InsertNote): Promise<Note> {
-    const id = this.currentId++;
-    const note: Note = { 
-      ...noteData, 
-      id, 
+    const event: Event = {
+      id,
+      title: eventData.title,
+      description: eventData.description ?? null,
+      hostId: eventData.hostId,
+      venueId: eventData.venueId ?? null,
+      category: eventData.category,
+      vibe: eventData.vibe ?? null,
+      date: eventData.date,
+      startTime: eventData.startTime,
+      endTime: eventData.endTime ?? null,
+      maxCapacity: eventData.maxCapacity ?? 12,
+      currentAttendees: eventData.currentAttendees ?? 0,
+      depositAmount: eventData.depositAmount ?? 0,
+      creditsEarned: eventData.creditsEarned ?? 10,
+      imageUrl: eventData.imageUrl ?? null,
+      neighborhood: eventData.neighborhood,
+      lat: eventData.lat ?? null,
+      lng: eventData.lng ?? null,
+      distance: eventData.distance ?? null,
+      status: eventData.status ?? "upcoming",
       createdAt: new Date(),
-      isInternal: noteData.isInternal ?? false
     };
-    this.notes.set(id, note);
-    return note;
+    this.events.set(id, event);
+    return event;
   }
 
-  // Activity methods
-  async getRecentActivities(userId: number, limit: number = 10): Promise<Activity[]> {
-    return Array.from(this.activities.values())
-      .filter(a => a.userId === userId)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(0, limit);
+  async updateEvent(id: number, updates: Partial<Event>): Promise<Event | undefined> {
+    const event = this.events.get(id);
+    if (!event) return undefined;
+    const updated = { ...event, ...updates };
+    this.events.set(id, updated);
+    return updated;
   }
 
-  async createActivity(activityData: InsertActivity): Promise<Activity> {
+  // RSVP methods
+  async createRsvp(rsvpData: InsertRsvp): Promise<Rsvp> {
     const id = this.currentId++;
-    const activity: Activity = { 
-      ...activityData, 
-      id, 
+    const rsvp: Rsvp = {
+      id,
+      userId: rsvpData.userId,
+      eventId: rsvpData.eventId,
+      status: rsvpData.status ?? "confirmed",
+      depositPaid: rsvpData.depositPaid ?? false,
+      checkedIn: rsvpData.checkedIn ?? false,
       createdAt: new Date(),
-      caseId: activityData.caseId ?? null
     };
-    this.activities.set(id, activity);
-    return activity;
+    this.rsvps.set(id, rsvp);
+
+    // Update event attendee count
+    const event = this.events.get(rsvpData.eventId);
+    if (event) {
+      event.currentAttendees += 1;
+      this.events.set(event.id, event);
+    }
+
+    return rsvp;
   }
 
-  // Dashboard methods
-  async getDashboardStats(userId: number): Promise<DashboardStats> {
-    const activeCases = Array.from(this.cases.values()).filter(c => 
-      c.caseManagerId === userId && c.status !== "closed"
-    ).length;
+  async cancelRsvp(userId: number, eventId: number): Promise<void> {
+    const rsvp = await this.getUserRsvpForEvent(userId, eventId);
+    if (rsvp) {
+      rsvp.status = "cancelled";
+      this.rsvps.set(rsvp.id, rsvp);
+      const event = this.events.get(eventId);
+      if (event && event.currentAttendees > 0) {
+        event.currentAttendees -= 1;
+        this.events.set(event.id, event);
+      }
+    }
+  }
 
-    const pendingTasks = Array.from(this.tasks.values()).filter(t => 
-      t.assignedTo === userId && t.status === "pending"
-    ).length;
+  async getRsvpsByEvent(eventId: number): Promise<Rsvp[]> {
+    return Array.from(this.rsvps.values()).filter(r => r.eventId === eventId && r.status === "confirmed");
+  }
 
-    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const completedTasksThisWeek = Array.from(this.tasks.values()).filter(t => 
-      t.assignedTo === userId && 
-      t.status === "completed" &&
-      t.updatedAt && 
-      t.updatedAt >= oneWeekAgo
-    ).length;
+  async getRsvpsByUser(userId: number): Promise<Rsvp[]> {
+    return Array.from(this.rsvps.values()).filter(r => r.userId === userId);
+  }
 
-    // Calculate average resolution days
-    const completedCases = Array.from(this.cases.values()).filter(c => 
-      c.caseManagerId === userId && c.status === "closed"
+  async getUserRsvpForEvent(userId: number, eventId: number): Promise<Rsvp | undefined> {
+    return Array.from(this.rsvps.values()).find(r =>
+      r.userId === userId && r.eventId === eventId && r.status === "confirmed"
     );
-    
-    let avgResolutionDays = 5.2; // Default value
-    if (completedCases.length > 0) {
-      const totalDays = completedCases.reduce((sum, c) => sum + c.daysAbsent, 0);
-      avgResolutionDays = Math.round((totalDays / completedCases.length) * 10) / 10;
+  }
+
+  // Credit methods
+  async getCreditTransactions(userId: number): Promise<CreditTransaction[]> {
+    return Array.from(this.creditTransactions.values())
+      .filter(t => t.userId === userId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async createCreditTransaction(txData: InsertCreditTransaction): Promise<CreditTransaction> {
+    const id = this.currentId++;
+    const tx: CreditTransaction = {
+      id,
+      userId: txData.userId,
+      amount: txData.amount,
+      type: txData.type,
+      description: txData.description,
+      eventId: txData.eventId ?? null,
+      venueId: txData.venueId ?? null,
+      createdAt: new Date(),
+    };
+    this.creditTransactions.set(id, tx);
+    return tx;
+  }
+
+  async getUserCredits(userId: number): Promise<number> {
+    const user = await this.getUser(userId);
+    return user?.credits ?? 0;
+  }
+
+  // Nudge methods
+  async getNudges(userId: number): Promise<Nudge[]> {
+    return Array.from(this.nudges.values())
+      .filter(n => n.userId === userId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async getUnreadNudges(userId: number): Promise<Nudge[]> {
+    return (await this.getNudges(userId)).filter(n => !n.read);
+  }
+
+  async createNudge(nudgeData: InsertNudge): Promise<Nudge> {
+    const id = this.currentId++;
+    const nudge: Nudge = {
+      id,
+      userId: nudgeData.userId,
+      message: nudgeData.message,
+      type: nudgeData.type,
+      eventId: nudgeData.eventId ?? null,
+      read: nudgeData.read ?? false,
+      actionLabel: nudgeData.actionLabel ?? null,
+      createdAt: new Date(),
+    };
+    this.nudges.set(id, nudge);
+    return nudge;
+  }
+
+  async markNudgeRead(id: number): Promise<void> {
+    const nudge = this.nudges.get(id);
+    if (nudge) {
+      nudge.read = true;
+      this.nudges.set(id, nudge);
+    }
+  }
+
+  // Home Feed
+  async getHomeFeed(userId: number): Promise<HomeFeed> {
+    const events = await this.getNearbyEvents(userId);
+    const nudges = await this.getUnreadNudges(userId);
+
+    // Build friend activity from RSVPs
+    const friendActivity: HomeFeed["friendActivity"] = [];
+    const allRsvps = Array.from(this.rsvps.values()).filter(r => r.userId !== userId && r.status === "confirmed");
+    for (const rsvp of allRsvps.slice(0, 3)) {
+      const friend = await this.getUser(rsvp.userId);
+      const event = await this.getEvent(rsvp.eventId);
+      if (friend && event) {
+        friendActivity.push({
+          userName: friend.name.split(" ")[0],
+          eventTitle: event.title,
+          eventId: event.id,
+        });
+      }
     }
 
     return {
-      activeCases,
-      pendingTasks,
-      completedTasksThisWeek,
-      avgResolutionDays
+      curatedEvents: events.slice(0, 5),
+      nudges,
+      friendActivity,
+    };
+  }
+
+  // Profile
+  async getUserProfile(id: number): Promise<UserProfile | undefined> {
+    const user = await this.getUser(id);
+    if (!user) return undefined;
+    return {
+      ...user,
+      karmaLevel: getKarmaLevel(user.communityKarma ?? 0),
+      reliabilityBadge: getReliabilityBadge(user.hostReliabilityScore ?? 100),
     };
   }
 }

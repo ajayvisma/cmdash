@@ -1,231 +1,244 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertTaskSchema, insertCaseSchema, insertNoteSchema } from "@shared/schema";
+import { insertEventSchema, onboardingSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Dashboard routes
-  app.get("/api/dashboard/stats/:userId", async (req, res) => {
+  // Home feed - curated events + nudges + friend activity
+  app.get("/api/home/:userId", async (req, res) => {
     try {
       const userId = parseInt(req.params.userId);
-      const stats = await storage.getDashboardStats(userId);
-      res.json(stats);
+      const feed = await storage.getHomeFeed(userId);
+      res.json(feed);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch dashboard stats" });
+      res.status(500).json({ error: "Failed to fetch home feed" });
     }
   });
 
-  // Case routes
-  app.get("/api/cases/active/:managerId", async (req, res) => {
+  // Events - nearby
+  app.get("/api/events/nearby/:userId", async (req, res) => {
     try {
-      const managerId = parseInt(req.params.managerId);
-      const cases = await storage.getActiveCases(managerId);
-      res.json(cases);
+      const userId = parseInt(req.params.userId);
+      const neighborhood = req.query.neighborhood as string | undefined;
+      const events = await storage.getNearbyEvents(userId, neighborhood);
+      res.json(events);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch active cases" });
+      res.status(500).json({ error: "Failed to fetch nearby events" });
     }
   });
 
-  app.get("/api/cases/:id", async (req, res) => {
+  // Events - by category
+  app.get("/api/events/category/:category/:userId", async (req, res) => {
+    try {
+      const userId = parseInt(req.params.userId);
+      const category = req.params.category;
+      const events = await storage.getEventsByCategory(category, userId);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch events by category" });
+    }
+  });
+
+  // Events - user's attending
+  app.get("/api/events/attending/:userId", async (req, res) => {
+    try {
+      const userId = parseInt(req.params.userId);
+      const events = await storage.getUserAttendingEvents(userId);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch attending events" });
+    }
+  });
+
+  // Events - user's hosted
+  app.get("/api/events/hosted/:userId", async (req, res) => {
+    try {
+      const userId = parseInt(req.params.userId);
+      const events = await storage.getUserHostedEvents(userId);
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch hosted events" });
+    }
+  });
+
+  // Event detail
+  app.get("/api/events/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const caseData = await storage.getCaseWithEmployee(id);
-      if (!caseData) {
-        return res.status(404).json({ error: "Case not found" });
+      const userId = parseInt(req.query.userId as string) || 1;
+      const event = await storage.getEventWithHost(id, userId);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
       }
-      res.json(caseData);
+      res.json(event);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch case" });
+      res.status(500).json({ error: "Failed to fetch event" });
     }
   });
 
-  app.post("/api/cases", async (req, res) => {
+  // Create event
+  app.post("/api/events", async (req, res) => {
     try {
-      const caseData = insertCaseSchema.parse(req.body);
-      const newCase = await storage.createCase(caseData);
-      res.status(201).json(newCase);
+      const eventData = insertEventSchema.parse(req.body);
+      const newEvent = await storage.createEvent(eventData);
+      res.status(201).json(newEvent);
     } catch (error) {
-      res.status(400).json({ error: "Invalid case data" });
+      res.status(400).json({ error: "Invalid event data" });
     }
   });
 
-  app.patch("/api/cases/:id", async (req, res) => {
+  // RSVP to event
+  app.post("/api/events/:id/rsvp", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const updates = req.body;
-      const updatedCase = await storage.updateCase(id, updates);
-      if (!updatedCase) {
-        return res.status(404).json({ error: "Case not found" });
+      const eventId = parseInt(req.params.id);
+      const userId = req.body.userId;
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
       }
-      res.json(updatedCase);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to update case" });
-    }
-  });
-
-  // Task routes
-  app.get("/api/tasks/today/:userId", async (req, res) => {
-    try {
-      const userId = parseInt(req.params.userId);
-      const tasks = await storage.getTodayTasks(userId);
-      res.json(tasks);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch today's tasks" });
-    }
-  });
-
-  app.get("/api/tasks/pending/:userId", async (req, res) => {
-    try {
-      const userId = parseInt(req.params.userId);
-      const tasks = await storage.getPendingTasks(userId);
-      res.json(tasks);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch pending tasks" });
-    }
-  });
-
-  app.get("/api/tasks/assigned/:userId", async (req, res) => {
-    try {
-      const userId = parseInt(req.params.userId);
-      const tasks = await storage.getTasksByAssignee(userId);
-      res.json(tasks);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch assigned tasks" });
-    }
-  });
-
-  app.get("/api/tasks/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const task = await storage.getTaskWithCase(id);
-      if (!task) {
-        return res.status(404).json({ error: "Task not found" });
+      if (event.currentAttendees >= event.maxCapacity) {
+        return res.status(400).json({ error: "Event is full" });
       }
-      res.json(task);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch task" });
-    }
-  });
-
-  app.post("/api/tasks", async (req, res) => {
-    try {
-      const taskData = insertTaskSchema.parse(req.body);
-      const newTask = await storage.createTask(taskData);
-      
-      // Create activity for task creation
-      await storage.createActivity({
-        description: `New task created: ${newTask.title}`,
-        type: "task_created",
-        userId: newTask.createdBy,
-        caseId: newTask.caseId || undefined
+      const existing = await storage.getUserRsvpForEvent(userId, eventId);
+      if (existing) {
+        return res.status(400).json({ error: "Already RSVP'd" });
+      }
+      const rsvp = await storage.createRsvp({
+        userId,
+        eventId,
+        status: "confirmed",
+        depositPaid: (event.depositAmount ?? 0) > 0,
+        checkedIn: false,
       });
-
-      res.status(201).json(newTask);
+      res.status(201).json(rsvp);
     } catch (error) {
-      res.status(400).json({ error: "Invalid task data" });
+      res.status(500).json({ error: "Failed to RSVP" });
     }
   });
 
-  app.patch("/api/tasks/:id", async (req, res) => {
+  // Cancel RSVP
+  app.delete("/api/events/:id/rsvp", async (req, res) => {
+    try {
+      const eventId = parseInt(req.params.id);
+      const userId = parseInt(req.query.userId as string);
+      await storage.cancelRsvp(userId, eventId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to cancel RSVP" });
+    }
+  });
+
+  // Event attendees (RSVP list)
+  app.get("/api/events/:id/attendees", async (req, res) => {
+    try {
+      const eventId = parseInt(req.params.id);
+      const rsvps = await storage.getRsvpsByEvent(eventId);
+      const attendees = [];
+      for (const rsvp of rsvps) {
+        const user = await storage.getUser(rsvp.userId);
+        if (user) {
+          attendees.push({
+            id: user.id,
+            name: user.name,
+            avatar: user.avatar,
+            attendanceRate: user.attendanceRate,
+          });
+        }
+      }
+      res.json(attendees);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch attendees" });
+    }
+  });
+
+  // User profile
+  app.get("/api/users/:id/profile", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const updates = req.body;
-      const updatedTask = await storage.updateTask(id, updates);
-      if (!updatedTask) {
-        return res.status(404).json({ error: "Task not found" });
+      const profile = await storage.getUserProfile(id);
+      if (!profile) {
+        return res.status(404).json({ error: "User not found" });
       }
-
-      // Create activity for task completion
-      if (updates.status === "completed") {
-        await storage.createActivity({
-          description: `Task completed: ${updatedTask.title}`,
-          type: "task_completed",
-          userId: updatedTask.assignedTo,
-          caseId: updatedTask.caseId || undefined
-        });
-      }
-
-      res.json(updatedTask);
+      res.json(profile);
     } catch (error) {
-      res.status(500).json({ error: "Failed to update task" });
+      res.status(500).json({ error: "Failed to fetch profile" });
     }
   });
 
-  // Employee routes
-  app.get("/api/employees/search", async (req, res) => {
-    try {
-      const query = req.query.q as string;
-      if (!query) {
-        return res.json([]);
-      }
-      const employees = await storage.searchEmployees(query);
-      res.json(employees);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to search employees" });
-    }
-  });
-
-  app.get("/api/employees/:id", async (req, res) => {
+  // Update user
+  app.patch("/api/users/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const employee = await storage.getEmployee(id);
-      if (!employee) {
-        return res.status(404).json({ error: "Employee not found" });
+      const updated = await storage.updateUser(id, req.body);
+      if (!updated) {
+        return res.status(404).json({ error: "User not found" });
       }
-      res.json(employee);
+      res.json(updated);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch employee" });
+      res.status(500).json({ error: "Failed to update user" });
     }
   });
 
-  // Activity routes
-  app.get("/api/activities/:userId", async (req, res) => {
-    try {
-      const userId = parseInt(req.params.userId);
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
-      const activities = await storage.getRecentActivities(userId, limit);
-      res.json(activities);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch activities" });
-    }
-  });
-
-  // Note routes
-  app.get("/api/cases/:caseId/notes", async (req, res) => {
-    try {
-      const caseId = parseInt(req.params.caseId);
-      const notes = await storage.getCaseNotes(caseId);
-      res.json(notes);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch case notes" });
-    }
-  });
-
-  app.post("/api/cases/:caseId/notes", async (req, res) => {
-    try {
-      const caseId = parseInt(req.params.caseId);
-      const noteData = insertNoteSchema.parse({
-        ...req.body,
-        caseId
-      });
-      const newNote = await storage.createNote(noteData);
-      res.status(201).json(newNote);
-    } catch (error) {
-      res.status(400).json({ error: "Invalid note data" });
-    }
-  });
-
-  // User routes
-  app.get("/api/users/:id", async (req, res) => {
+  // Onboarding
+  app.post("/api/users/:id/onboarding", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const user = await storage.getUser(id);
+      const data = onboardingSchema.parse(req.body);
+      const user = await storage.completeOnboarding(id, data);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
       res.json(user);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch user" });
+      res.status(400).json({ error: "Invalid onboarding data" });
+    }
+  });
+
+  // Credit transactions
+  app.get("/api/users/:id/credits", async (req, res) => {
+    try {
+      const userId = parseInt(req.params.id);
+      const transactions = await storage.getCreditTransactions(userId);
+      const balance = await storage.getUserCredits(userId);
+      res.json({ balance, transactions });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch credits" });
+    }
+  });
+
+  // Nudges
+  app.get("/api/nudges/:userId", async (req, res) => {
+    try {
+      const userId = parseInt(req.params.userId);
+      const nudges = await storage.getUnreadNudges(userId);
+      res.json(nudges);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch nudges" });
+    }
+  });
+
+  // Mark nudge as read
+  app.patch("/api/nudges/:id/read", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.markNudgeRead(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to mark nudge as read" });
+    }
+  });
+
+  // Venues
+  app.get("/api/venues", async (req, res) => {
+    try {
+      const neighborhood = req.query.neighborhood as string;
+      if (!neighborhood) {
+        return res.json([]);
+      }
+      const venues = await storage.getVenuesByNeighborhood(neighborhood);
+      res.json(venues);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch venues" });
     }
   });
 
